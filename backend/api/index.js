@@ -49,7 +49,11 @@ seedLeads.forEach((l, i) => {
   db.leads.set(id, { ...l, _id: id, createdAt: new Date(Date.now() - i * 2 * 86_400_000), updatedAt: new Date() });
 });
 
-const counters = { user: 3, lead: seedLeads.length + 1, note: 1, activity: 1 };
+// Seed sample activity
+db.activities.set('act_1', { _id: 'act_1', leadId: 'lead_1', type: 'status_change', description: 'Status changed to Qualified', createdBy: 'user_2', createdAt: new Date() });
+db.activities.set('act_2', { _id: 'act_2', leadId: 'lead_5', type: 'status_change', description: 'Status changed to Won', createdBy: 'user_1', createdAt: new Date() });
+
+const counters = { user: 3, lead: seedLeads.length + 1, note: 1, activity: 3 };
 const uid = (t) => `${t}_${counters[t]++}`;
 
 // ---------------------------------------------------------------------------
@@ -57,7 +61,6 @@ const uid = (t) => `${t}_${counters[t]++}`;
 // ---------------------------------------------------------------------------
 const app = express();
 
-// Enable CORS properly without hanging callback
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: '10mb' }));
 
@@ -94,14 +97,14 @@ const safeUser = ({ password, ...rest }) => rest;
 // ---------------------------------------------------------------------------
 // Health
 // ---------------------------------------------------------------------------
-app.get('/api/health', (_, res) =>
+app.get(['/api/health', '/health'], (_, res) =>
   res.json({ status: 'ok', mode: 'serverless-memory', users: db.users.size, leads: db.leads.size })
 );
 
 // ---------------------------------------------------------------------------
 // Auth
 // ---------------------------------------------------------------------------
-app.post('/api/auth/register', async (req, res) => {
+app.post(['/api/auth/register', '/auth/register'], async (req, res) => {
   try {
     const { name, email, password, role = 'member' } = req.body;
     if (!name || !email || !password)
@@ -118,7 +121,7 @@ app.post('/api/auth/register', async (req, res) => {
   } catch (e) { res.status(500).json({ success: false, message: e.message }); }
 });
 
-app.post('/api/auth/login', async (req, res) => {
+app.post(['/api/auth/login', '/auth/login'], async (req, res) => {
   try {
     const { email, password } = req.body;
     if (!email || !password)
@@ -133,13 +136,13 @@ app.post('/api/auth/login', async (req, res) => {
   } catch (e) { res.status(500).json({ success: false, message: e.message }); }
 });
 
-app.get('/api/auth/me', auth, (req, res) => {
+app.get(['/api/auth/me', '/auth/me'], auth, (req, res) => {
   const user = db.users.get(req.user.id);
   if (!user) return res.status(404).json({ success: false, message: 'User not found' });
   res.json({ success: true, data: { user: safeUser(user) } });
 });
 
-app.patch('/api/auth/me', auth, async (req, res) => {
+app.patch(['/api/auth/me', '/auth/me'], auth, async (req, res) => {
   const user = db.users.get(req.user.id);
   if (!user) return res.status(404).json({ success: false, message: 'User not found' });
   if (req.body.name) user.name = req.body.name;
@@ -151,18 +154,18 @@ app.patch('/api/auth/me', auth, async (req, res) => {
 // ---------------------------------------------------------------------------
 // Users (admin only)
 // ---------------------------------------------------------------------------
-app.get('/api/users', auth, adminOnly, (_, res) => {
+app.get(['/api/users', '/users'], auth, adminOnly, (_, res) => {
   const users = [...db.users.values()].map(safeUser);
   res.json({ success: true, data: { users, total: users.length } });
 });
 
-app.get('/api/users/:id', auth, adminOnly, (req, res) => {
+app.get(['/api/users/:id', '/users/:id'], auth, adminOnly, (req, res) => {
   const user = db.users.get(req.params.id);
   if (!user) return res.status(404).json({ success: false, message: 'User not found' });
   res.json({ success: true, data: { user: safeUser(user) } });
 });
 
-app.post('/api/users', auth, adminOnly, async (req, res) => {
+app.post(['/api/users', '/users'], auth, adminOnly, async (req, res) => {
   try {
     const { name, email, password, role = 'member' } = req.body;
     if (!name || !email || !password)
@@ -178,7 +181,7 @@ app.post('/api/users', auth, adminOnly, async (req, res) => {
   } catch (e) { res.status(500).json({ success: false, message: e.message }); }
 });
 
-app.patch('/api/users/:id', auth, adminOnly, async (req, res) => {
+app.patch(['/api/users/:id', '/users/:id'], auth, adminOnly, async (req, res) => {
   const user = db.users.get(req.params.id);
   if (!user) return res.status(404).json({ success: false, message: 'User not found' });
   if (req.body.name) user.name = req.body.name;
@@ -189,7 +192,7 @@ app.patch('/api/users/:id', auth, adminOnly, async (req, res) => {
   res.json({ success: true, data: { user: safeUser(user) } });
 });
 
-app.delete('/api/users/:id', auth, adminOnly, (req, res) => {
+app.delete(['/api/users/:id', '/users/:id'], auth, adminOnly, (req, res) => {
   if (req.params.id === req.user.id)
     return res.status(400).json({ success: false, message: 'Cannot delete yourself' });
   if (!db.users.has(req.params.id))
@@ -199,9 +202,53 @@ app.delete('/api/users/:id', auth, adminOnly, (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// Dashboard Stats (DEFINED BEFORE /api/leads/:id to avoid ID conflict)
+// ---------------------------------------------------------------------------
+const handleDashboard = (req, res) => {
+  const all = [...db.leads.values()];
+  const byStatus = {}, bySource = {};
+  let newCount = 0, qualifiedCount = 0, wonCount = 0, lostCount = 0;
+  
+  all.forEach((l) => {
+    byStatus[l.status] = (byStatus[l.status] || 0) + 1;
+    bySource[l.source] = (bySource[l.source] || 0) + 1;
+    if (l.status === 'new') newCount++;
+    if (l.status === 'qualified') qualifiedCount++;
+    if (l.status === 'closed_won' || l.status === 'won') wonCount++;
+    if (l.status === 'closed_lost' || l.status === 'lost') lostCount++;
+  });
+
+  const total = all.length;
+  const conversionRate = total > 0 ? Math.round((wonCount / total) * 100) : 0;
+  const recentActivities = [...db.activities.values()]
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+    .slice(0, 10);
+
+  res.json({
+    success: true,
+    data: {
+      stats: {
+        total,
+        new: newCount,
+        qualified: qualifiedCount,
+        won: wonCount,
+        lost: lostCount,
+        conversionRate,
+        byStatus,
+        bySource
+      },
+      recentActivities
+    }
+  });
+};
+
+app.get(['/api/leads/stats', '/leads/stats'], auth, handleDashboard);
+app.get(['/api/leads/dashboard', '/leads/dashboard'], auth, handleDashboard);
+
+// ---------------------------------------------------------------------------
 // Leads — public capture (no auth)
 // ---------------------------------------------------------------------------
-app.post('/api/leads', (req, res) => {
+app.post(['/api/leads', '/leads'], (req, res) => {
   const { name, email, phone, company, message, source = 'website' } = req.body;
   if (!name || !email || !phone || !company || !message)
     return res.status(400).json({ success: false, message: 'All fields are required', errors: [] });
@@ -211,18 +258,7 @@ app.post('/api/leads', (req, res) => {
   res.status(201).json({ success: true, message: 'Thank you! We will be in touch soon.', data: { lead } });
 });
 
-// Leads stats (auth required, before /:id to avoid clash)
-app.get('/api/leads/stats', auth, (_, res) => {
-  const all = [...db.leads.values()];
-  const byStatus = {}, bySource = {};
-  all.forEach((l) => {
-    byStatus[l.status] = (byStatus[l.status] || 0) + 1;
-    bySource[l.source] = (bySource[l.source] || 0) + 1;
-  });
-  res.json({ success: true, data: { total: all.length, byStatus, bySource } });
-});
-
-app.get('/api/leads', auth, (req, res) => {
+app.get(['/api/leads', '/leads'], auth, (req, res) => {
   let list = [...db.leads.values()];
   const { status, source, assignedTo, search } = req.query;
   if (status) list = list.filter((l) => l.status === status);
@@ -239,13 +275,13 @@ app.get('/api/leads', auth, (req, res) => {
   res.json({ success: true, data: { leads: list.slice((page - 1) * limit, page * limit), total, page, pages: Math.ceil(total / limit) } });
 });
 
-app.get('/api/leads/:id', auth, (req, res) => {
+app.get(['/api/leads/:id', '/leads/:id'], auth, (req, res) => {
   const lead = db.leads.get(req.params.id);
   if (!lead) return res.status(404).json({ success: false, message: 'Lead not found' });
   res.json({ success: true, data: { lead } });
 });
 
-app.patch('/api/leads/:id', auth, (req, res) => {
+app.patch(['/api/leads/:id', '/leads/:id'], auth, (req, res) => {
   const lead = db.leads.get(req.params.id);
   if (!lead) return res.status(404).json({ success: false, message: 'Lead not found' });
   ['name','email','phone','company','message','status','source','assignedTo'].forEach(
@@ -256,7 +292,18 @@ app.patch('/api/leads/:id', auth, (req, res) => {
   res.json({ success: true, data: { lead } });
 });
 
-app.delete('/api/leads/:id', auth, adminOnly, (req, res) => {
+app.put(['/api/leads/:id', '/leads/:id'], auth, (req, res) => {
+  const lead = db.leads.get(req.params.id);
+  if (!lead) return res.status(404).json({ success: false, message: 'Lead not found' });
+  ['name','email','phone','company','message','status','source','assignedTo'].forEach(
+    (k) => { if (req.body[k] !== undefined) lead[k] = req.body[k]; }
+  );
+  lead.updatedAt = new Date();
+  db.leads.set(lead._id, lead);
+  res.json({ success: true, data: { lead } });
+});
+
+app.delete(['/api/leads/:id', '/leads/:id'], auth, adminOnly, (req, res) => {
   if (!db.leads.has(req.params.id))
     return res.status(404).json({ success: false, message: 'Lead not found' });
   db.leads.delete(req.params.id);
@@ -266,14 +313,14 @@ app.delete('/api/leads/:id', auth, adminOnly, (req, res) => {
 // ---------------------------------------------------------------------------
 // Notes
 // ---------------------------------------------------------------------------
-app.get('/api/leads/:id/notes', auth, (req, res) => {
+app.get(['/api/leads/:id/notes', '/leads/:id/notes'], auth, (req, res) => {
   const notes = [...db.notes.values()].filter((n) => n.leadId === req.params.id)
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   res.json({ success: true, data: { notes } });
 });
 
-app.post('/api/leads/:id/notes', auth, (req, res) => {
-  const { content } = req.body;
+app.post(['/api/leads/:id/notes', '/leads/:id/notes', '/api/leads/:id/note', '/leads/:id/note'], auth, (req, res) => {
+  const content = req.body.content || req.body.text || req.body.body;
   if (!content || !content.trim())
     return res.status(400).json({ success: false, message: 'Note content is required' });
   if (!db.leads.has(req.params.id))
@@ -284,7 +331,7 @@ app.post('/api/leads/:id/notes', auth, (req, res) => {
   res.status(201).json({ success: true, data: { note } });
 });
 
-app.delete('/api/leads/:leadId/notes/:noteId', auth, (req, res) => {
+app.delete(['/api/leads/:leadId/notes/:noteId', '/leads/:leadId/notes/:noteId'], auth, (req, res) => {
   const note = db.notes.get(req.params.noteId);
   if (!note || note.leadId !== req.params.leadId)
     return res.status(404).json({ success: false, message: 'Note not found' });
@@ -297,7 +344,7 @@ app.delete('/api/leads/:leadId/notes/:noteId', auth, (req, res) => {
 // ---------------------------------------------------------------------------
 // Activities
 // ---------------------------------------------------------------------------
-app.get('/api/leads/:id/activities', auth, (req, res) => {
+app.get(['/api/leads/:id/activities', '/leads/:id/activities', '/api/leads/:id/activity', '/leads/:id/activity'], auth, (req, res) => {
   const acts = [...db.activities.values()].filter((a) => a.leadId === req.params.id)
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   res.json({ success: true, data: { activities: acts } });
