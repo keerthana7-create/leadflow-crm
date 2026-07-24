@@ -1,9 +1,8 @@
 /**
  * LeadFlow CRM — Vercel Serverless API Handler
  *
- * Self-contained Express app with in-memory data (no MongoDB subprocess).
- * Uses bcryptjs.hashSync at module load so demo data is ready synchronously
- * before the first request ever arrives — no race conditions.
+ * Self-contained Express app with in-memory data.
+ * Pre-seeded synchronously at module load.
  *
  * Demo accounts:
  *   admin@leadflow.com / password123
@@ -17,11 +16,11 @@ const cors    = require('cors');
 const jwt     = require('jsonwebtoken');
 const bcrypt  = require('bcryptjs');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'leadflow-serverless-secret-2024';
+const JWT_SECRET  = process.env.JWT_SECRET || 'leadflow-serverless-secret-2024';
 const SALT_ROUNDS = 10;
 
 // ---------------------------------------------------------------------------
-// In-memory store — populated synchronously at module load (no async!)
+// In-memory store
 // ---------------------------------------------------------------------------
 const db = {
   users:      new Map(),
@@ -30,7 +29,6 @@ const db = {
   activities: new Map(),
 };
 
-// Pre-compute hash synchronously so data is ready before any request
 const DEMO_HASH = bcrypt.hashSync('password123', SALT_ROUNDS);
 
 db.users.set('user_1', { _id: 'user_1', name: 'Admin User',  email: 'admin@leadflow.com', password: DEMO_HASH, role: 'admin',  isActive: true, createdAt: new Date() });
@@ -59,8 +57,17 @@ const uid = (t) => `${t}_${counters[t]++}`;
 // ---------------------------------------------------------------------------
 const app = express();
 
-app.use(cors({ origin: () => true, credentials: true }));
+// Enable CORS properly without hanging callback
+app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: '10mb' }));
+
+// Middleware to normalize URL paths regardless of how Vercel routes them
+app.use((req, _res, next) => {
+  if (!req.url.startsWith('/api')) {
+    req.url = '/api' + (req.url.startsWith('/') ? '' : '/') + req.url;
+  }
+  next();
+});
 
 // ---------------------------------------------------------------------------
 // Auth middleware
