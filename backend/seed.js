@@ -118,7 +118,9 @@ if (require.main === module) {
     .then(() => seedDatabase())
     .then(() => process.exit(0))
     .catch((err) => {
-      console.error('❌ Seeding failed:', err.message);
+      console.error('Seeding failed:', err.message);
       process.exit(1);
     });
 }
+
+module.exports = { seedDatabase };

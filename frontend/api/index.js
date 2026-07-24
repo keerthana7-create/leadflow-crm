@@ -1,6 +1,6 @@
-const app = require('../backend/app');
-const connectDB = require('../backend/config/db');
-const { seedDatabase } = require('../backend/seed');
+const app = require('../../backend/app');
+const connectDB = require('../../backend/config/db');
+const { seedDatabase } = require('../../backend/seed');
 
 let isConnected = false;
 
@@ -9,7 +9,7 @@ app.use(async (req, res, next) => {
   if (!isConnected) {
     try {
       await connectDB();
-      const User = require('../backend/models/User');
+      const User = require('../../backend/models/User');
       const count = await User.countDocuments();
       if (count === 0) {
         await seedDatabase();
